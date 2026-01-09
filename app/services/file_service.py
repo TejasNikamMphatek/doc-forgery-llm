@@ -2,37 +2,64 @@ import pdfplumber
 import pytesseract
 from PIL import Image
 from io import BytesIO
-from fastapi import UploadFile
+from pdf2image import convert_from_bytes
+import fitz  # PyMuPDF
+from PIL import Image, ExifTags
+from io import BytesIO
 
 
-def extract_text(file: UploadFile) -> str:
+def extract_text_from_bytes(content: bytes, content_type: str) -> str:
     """
-    Entry point for extracting text from uploaded documents.
-    Supports PDF and image files.
+    Takes raw bytes directly so we don't have to worry about FastAPI file pointers.
     """
-    content = file.file.read()
-    file.file.seek(0)
+    if content_type == "application/pdf":
+        text = ""
+        with pdfplumber.open(BytesIO(content)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+        return text.strip()
 
-    if file.content_type == "application/pdf":
-        return _extract_text_from_pdf(content)
+    elif content_type.startswith("image/"):
+        image = Image.open(BytesIO(content))
+        return pytesseract.image_to_string(image).strip()
+    
+    return ""
 
-    elif file.content_type.startswith("image/"):
-        return _extract_text_from_image(content)
+def convert_pdf_to_images(pdf_content: bytes):
+    """
+    Converts PDF pages into a list of PIL Image objects.
+    """
+    # 300 DPI is standard for forensic-level detail
+    return convert_from_bytes(pdf_content, dpi=300)
 
-    else:
-        return ""
+def get_image_bytes(image: Image.Image) -> bytes:
+    """
+    Converts a PIL Image object back into JPEG bytes.
+    """
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
 
 
-def _extract_text_from_pdf(content: bytes) -> str:
-    text = ""
-    with pdfplumber.open(BytesIO(content)) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-    return text.strip()
 
+def extract_metadata(content: bytes, content_type: str) -> dict:
+    """
+    Extracts hidden metadata tags from PDFs and Images.
+    """
+    meta_info = {}
 
-def _extract_text_from_image(content: bytes) -> str:
-    image = Image.open(BytesIO(content))
-    return pytesseract.image_to_string(image).strip()
+    if content_type == "application/pdf":
+        with fitz.open(stream=content, filetype="pdf") as doc:
+            meta_info = doc.metadata  # Returns dict with author, creator, producer, etc.
+            
+    elif content_type.startswith("image/"):
+        image = Image.open(BytesIO(content))
+        exif_data = image.getexif()
+        if exif_data:
+            for tag_id, value in exif_data.items():
+                tag = ExifTags.TAGS.get(tag_id, tag_id)
+                meta_info[tag] = str(value)
+                
+    return meta_info
