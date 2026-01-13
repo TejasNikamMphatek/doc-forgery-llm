@@ -3,29 +3,35 @@ import re
 from pydantic import BaseModel, Field, ValidationError
 from typing import List
 
-# This class defines exactly what a "Forgery Result" looks like
 class ForgeryAnalysis(BaseModel):
-    classification: str = Field(description="ORIGINAL, SUSPICIOUS, or FORGED")
-    confidence: int = Field(ge=0, le=100)
-    visual_evidence: List[str] = Field(default_factory=list)
-    logical_evidence: List[str] = Field(default_factory=list)
+    # These MUST match the keys in your prompt exactly
+    classification: str
+    confidence: int
+    visual_evidence: List[str]
+    logical_evidence: List[str]
     summary: str
 
 def parse_llm_response(raw_response: str) -> dict:
     try:
-        # 1. Clean markdown artifacts
-        cleaned = re.sub(r"```json|```", "", raw_response).strip()
-        data = json.loads(cleaned)
+        # 1. Strip Markdown and find the first '{' and last '}'
+        # This is safer than just replacing "```json"
+        match = re.search(r"\{.*\}", raw_response, re.DOTALL)
+        if not match:
+            raise ValueError("No JSON found in response")
+            
+        cleaned_json = match.group(0)
+        data = json.loads(cleaned_json)
 
-        # 2. Use Pydantic to validate the data shape
+        # 2. Validate with Pydantic
         validated_data = ForgeryAnalysis(**data)
         return validated_data.model_dump()
 
-    except (ValidationError, json.JSONDecodeError) as exc:
+    except Exception as exc:
+        # If parsing fails, we return a detailed error so you know WHY it failed
         return {
-            "classification": "SUSPICIOUS",
+            "classification": "ERROR",
             "confidence": 0,
-            "visual_evidence": ["Parsing Error"],
-            "logical_evidence": [str(exc)],
-            "summary": "The AI response was malformed. Please try again."
+            "visual_evidence": ["System Parsing Error"],
+            "logical_evidence": [f"Technical Details: {str(exc)}"],
+            "summary": "The AI response could not be processed. Please check logs."
         }
