@@ -3,58 +3,54 @@ from app.services.file_service import (
     extract_text_from_bytes, 
     convert_pdf_to_images, 
     get_image_bytes,
-    extract_metadata  # Ensure you import your new metadata service
+    extract_metadata
 )
 from app.services.prompt_service import build_forgery_prompt
 from app.services.llm_service import call_llm_with_vision
-from app.services.response_service import parse_llm_response
+from app.services.response_service import parse_llm_response, ForgeryAnalysis
 
 router = APIRouter()
 
 @router.post("/analyze-document")
 async def analyze_document(file: UploadFile = File(...)):
-    # 1. Read file bytes once to avoid pointer issues
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="File is empty")
 
-    # 2. Extract Metadata (Our new 1st layer of security)
     metadata = extract_metadata(content, file.content_type)
+    image_list_for_llm = []
+    document_text = ""
 
-    image_bytes_for_llm = None
-    
-    # 3. Handle Branching Logic for PDF vs Image
+    # Process PDF vs Image
     if file.content_type == "application/pdf":
-        # Extract Text
         document_text = extract_text_from_bytes(content, "application/pdf")
-        # Convert first page to image for Vision analysis
         pdf_pages = convert_pdf_to_images(content)
-        if pdf_pages:
-            image_bytes_for_llm = get_image_bytes(pdf_pages[0])
+        for page in pdf_pages[:10]: 
+            image_list_for_llm.append(get_image_bytes(page))
             
     elif file.content_type.startswith("image/"):
-        # Extract Text (OCR)
         document_text = extract_text_from_bytes(content, file.content_type)
-        # Use raw bytes directly
-        image_bytes_for_llm = content
+        image_list_for_llm.append(content)
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    # 4. Check if we have an image to send
-    if not image_bytes_for_llm:
-        raise HTTPException(status_code=500, detail="Could not process image for analysis")
+    if not image_list_for_llm:
+        raise HTTPException(status_code=500, detail="Could not process images for analysis")
 
-    # 5. Build the forensic prompt (NOW PASSING METADATA)
+    # 1. Build universal forensic prompt
     prompt = build_forgery_prompt(document_text, metadata)
 
-    # 6. Call Vision LLM with prompt + image
-    raw_llm_response = call_llm_with_vision(prompt, image_bytes_for_llm)
-
-    # 7. Parse the structured JSON response
-    result = parse_llm_response(raw_llm_response)
+    # 2. Call Multi-Vision LLM
+    raw_llm_response = call_llm_with_vision(prompt, image_list_for_llm)
+    
+    # 3. Parse directly into the Pydantic Object (Corrected line)
+    analysis_obj = parse_llm_response(raw_llm_response)
+    
+    # 4. Apply the Confidence Threshold
+    final_result = analysis_obj.verify_confidence(threshold=85).model_dump()
 
     return {
         "filename": file.filename,
-        "metadata_raw": metadata, # Optional: return raw metadata for transparency
-        "analysis": result
+        "page_count": len(image_list_for_llm),
+        "analysis": final_result 
     }
