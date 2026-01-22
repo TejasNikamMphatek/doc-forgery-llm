@@ -10,12 +10,22 @@ app = FastAPI(
 )
 
 # Add CORS so a web browser can call your API
+#app.add_middleware(
+#    CORSMiddleware,
+#    allow_origins=["*"],
+#    allow_methods=["*"],
+#    allow_headers=["*"],
+#)
+
+# Add CORS middleware BEFORE routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
 )
+
 
 app.include_router(analyze_router, prefix="/api", tags=["Forensics"])
 
