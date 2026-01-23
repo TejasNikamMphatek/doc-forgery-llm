@@ -7,7 +7,7 @@ from app.services.file_service import (
 )
 from app.services.prompt_service import build_forgery_prompt
 from app.services.llm_service import call_llm_with_vision
-from app.services.response_service import parse_llm_response, ForgeryAnalysis
+from app.services.response_service import parse_llm_response, ForgeryAnalysis,enforce_phase_discipline
 
 router = APIRouter()
 
@@ -42,13 +42,17 @@ async def analyze_document(file: UploadFile = File(...)):
 
     # 2. Call Multi-Vision LLM
     raw_llm_response = call_llm_with_vision(prompt, image_list_for_llm)
-    
-    # 3. Parse directly into the Pydantic Object (Corrected line)
     analysis_obj = parse_llm_response(raw_llm_response)
-    
-    # 4. Apply the Confidence Threshold
-    final_result = analysis_obj.verify_confidence(threshold=85).model_dump()
 
+    analysis_obj = enforce_phase_discipline(analysis_obj)
+
+    analysis_obj = analysis_obj.verify_confidence(threshold=90)
+
+    final_result = analysis_obj.model_dump()
+
+   
+    # 3. Parse directly into the Pydantic Object (Corrected line)
+  
     return {
         "filename": file.filename,
         "page_count": len(image_list_for_llm),
