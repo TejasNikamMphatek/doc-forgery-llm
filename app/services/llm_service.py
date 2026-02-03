@@ -61,7 +61,7 @@ def call_llm_with_vision(prompt: str, image_list: list) -> str:
     }
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-4.1",
         "messages": [
             {"role": "system", "content": "You are a forensic document expert."},
             {"role": "user", "content": content_payload}
