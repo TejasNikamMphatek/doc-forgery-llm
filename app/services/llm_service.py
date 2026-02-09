@@ -1,86 +1,50 @@
-import requests
-import base64
-import json
+from google import genai
+from google.genai import types
 from config import settings
 
-def call_llm_with_vision(prompt: str, image_list: list) -> str:
-    headers = {
-        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-    content_payload = [{"type": "text", "text": prompt}]
-    
-    # Process images (Limit to first 3 pages to save tokens if it's a large PDF)
-    for img_bytes in image_list[:3]:
-        base64_image = base64.b64encode(img_bytes).decode('utf-8')
-        content_payload.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{base64_image}",
-                "detail": "high"
-            }
-        })
+def call_gemini_forensics(prompt: str, file_content: bytes, mime_type: str) -> str:
+    document_part = types.Part.from_bytes(data=file_content, mime_type=mime_type)
 
-    # UPDATED SCHEMA to match the new 2-step Logic
-    json_schema = {
-        "name": "forgery_analysis",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "visual_analysis": {
-                    "type": "object",
-                    "properties": {
-                        "is_tampered": {"type": "boolean"},
-                        "confidence_score": {"type": "integer"},
-                        "specific_artifacts": {"type": "array", "items": {"type": "string"}},
-                        "quality_check": {"type": "string", "description": "Describe image quality (e.g. Blurry, HD, Grainy)"}
-                    },
-                    "required": ["is_tampered", "confidence_score", "specific_artifacts", "quality_check"],
-                    "additionalProperties": False
+    response_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "visual_analysis": {
+                "type": "OBJECT",
+                "properties": {
+                    "is_tampered": {"type": "BOOLEAN"},
+                    "confidence_score": {"type": "INTEGER"},
+                    "specific_artifacts": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "quality_check": {"type": "STRING"}
                 },
-                "logical_analysis": {
-                    "type": "object",
-                    "properties": {
-                        "has_contradictions": {"type": "boolean"},
-                        "confidence_score": {"type": "integer"},
-                        "math_errors": {"type": "array", "items": {"type": "string"}},
-                        "date_issues": {"type": "array", "items": {"type": "string"}}
-                    },
-                    "required": ["has_contradictions", "confidence_score", "math_errors", "date_issues"],
-                    "additionalProperties": False
-                },
-                "final_classification": {"type": "string", "enum": ["ORIGINAL", "SUSPICIOUS", "FORGED"]},
-                "final_confidence": {"type": "integer"},
-                "summary": {"type": "string"}
+                "required": ["is_tampered", "confidence_score", "specific_artifacts", "quality_check"]
             },
-            "required": ["visual_analysis", "logical_analysis", "final_classification", "final_confidence", "summary"],
-            "additionalProperties": False
-        }
-    }
-
-    payload = {
-        "model": "gpt-4.1",
-        "messages": [
-            {"role": "system", "content": "You are a forensic document expert."},
-            {"role": "user", "content": content_payload}
-        ],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": json_schema
+            "logical_analysis": {
+                "type": "OBJECT",
+                "properties": {
+                    "has_contradictions": {"type": "BOOLEAN"},
+                    "confidence_score": {"type": "INTEGER"},
+                    "math_errors": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "date_issues": {"type": "ARRAY", "items": {"type": "STRING"}}
+                },
+                "required": ["has_contradictions", "confidence_score", "math_errors", "date_issues"]
+            },
+            "classification": {"type": "STRING"},
+            "confidence": {"type": "INTEGER"},
+            "summary": {"type": "STRING"},
+            "reasoning": {"type": "STRING"}
         },
-        "temperature": 0.1  # Low temperature for strict analysis
+        "required": ["visual_analysis", "logical_analysis", "classification", "confidence", "summary"]
     }
 
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers=headers,
-        json=payload,
-        timeout=180
+    response = client.models.generate_content(
+        model=settings.GEMINI_MODEL,
+        contents=[document_part, prompt],
+        config=types.GenerateContentConfig(
+            temperature=0.1,
+            response_mime_type="application/json",
+            response_schema=response_schema,
+        )
     )
-
-    if response.status_code != 200:
-        raise Exception(f"API Error: {response.text}")
-
-    return response.json()["choices"][0]["message"]["content"]
+    return response.text
